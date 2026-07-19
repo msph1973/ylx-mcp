@@ -326,6 +326,61 @@ async def deployment_status(limit: int = 5) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Sanity helpers
+# ---------------------------------------------------------------------------
+
+SANITY_API = f"https://{SANITY_PROJECT_ID}.api.sanity.io/v2024-01-01/data/query/{SANITY_DATASET}"
+
+
+async def sanity_query(groq: str) -> dict:
+    async with httpx.AsyncClient() as c:
+        headers = {"Authorization": f"Bearer {SANITY_API_TOKEN}"} if SANITY_API_TOKEN else {}
+        r = await c.get(SANITY_API, params={"query": groq}, headers=headers, timeout=30)
+        r.raise_for_status()
+        return r.json()
+
+
+# ---------------------------------------------------------------------------
+# Tool: sanity_query
+# ---------------------------------------------------------------------------
+
+PRESET_QUERIES = {
+    "albums": '*[_type == "album"]{_id, title, slug, status, photoCount: count(photos), selectionCount: count(selections), shareCount, _createdAt} | order(_createdAt desc)',
+    "album_detail": '*[_type == "album" && slug.current == $slug]{..., "photos": photos[], "selections": selections[]}',
+    "selections": '*[_type == "selection"]{_id, album->title, photo->originalFilename, selected, note} | order(_createdAt desc)',
+    "photos_count": '{"total": count(*[_type == "photo"]), "albums": count(*[_type == "album"]), "selections": count(*[_type == "selection"])}',
+    "recent_albums": '*[_type == "album"] | order(_createdAt desc)[0...5]{title, slug, status, _createdAt}',
+    "locked_albums": '*[_type == "album" && status == "locked"]{title, slug, _createdAt}',
+    "active_albums": '*[_type == "album" && status == "active"]{title, slug, _createdAt}',
+    "submissions": '*[_type == "album" && status == "submitted"]{title, slug, _createdAt}',
+    "photos_by_album": '*[_type == "album"]{title, slug, photoCount: count(photos)} | order(photoCount desc)',
+    "top_viewed": '*[_type == "album"] | order(shareCount desc)[0...10]{title, slug, shareCount, lastAccessedAt}',
+}
+
+
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True), timeout=30.0)
+async def sanity_data(query: str = "albums", slug: str | None = None) -> dict:
+    """Query YLx Sanity data — albums, photos, selections, stats.
+
+    Args:
+        query: Preset name (albums, album_detail, selections, photos_count,
+               recent_albums, locked_albums, active_albums, submissions,
+               photos_by_album, top_viewed) or raw GROQ query.
+        slug: Album slug for album_detail query.
+    """
+    if query in PRESET_QUERIES:
+        groq = PRESET_QUERIES[query]
+        if query == "album_detail" and slug:
+            result = await sanity_query(groq.replace("$slug", f'"{slug}"'))
+        else:
+            result = await sanity_query(groq)
+        return {"query": query, "result": result.get("result", [])}
+
+    result = await sanity_query(query)
+    return {"query": "custom", "result": result.get("result", [])}
+
+
+# ---------------------------------------------------------------------------
 # Run
 # ---------------------------------------------------------------------------
 
