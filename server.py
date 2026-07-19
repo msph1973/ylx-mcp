@@ -381,6 +381,127 @@ async def sanity_data(query: str = "albums", slug: str | None = None) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Vercel helpers
+# ---------------------------------------------------------------------------
+
+def _vercel_headers() -> dict[str, str]:
+    return {"Authorization": f"Bearer {VERCEL_TOKEN}", "Content-Type": "application/json"} if VERCEL_TOKEN else {}
+
+def _vercel_params(**extra) -> dict:
+    p = dict(extra)
+    if VERCEL_TEAM_ID:
+        p["teamId"] = VERCEL_TEAM_ID
+    return p
+
+
+# ---------------------------------------------------------------------------
+# Tool: vercel_urls
+# ---------------------------------------------------------------------------
+
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True), timeout=30.0)
+async def vercel_urls() -> dict:
+    """Get production and preview URLs for the YLx Vercel project.
+
+    Returns the project's domains, aliases, and deployment URLs.
+    """
+    async with httpx.AsyncClient() as c:
+        r = await c.get(f"{VERCEL_API}/v9/projects/{VERCEL_PROJECT_ID}", headers=_vercel_headers(), params=_vercel_params(), timeout=30)
+        r.raise_for_status()
+        project = r.json()
+
+    aliases = project.get("alias", [])
+    targets = project.get("targets", {})
+
+    prod_url = None
+    if "production" in targets:
+        prod_url = targets["production"].get("alias", [None])[0] if targets["production"].get("alias") else None
+
+    return {
+        "project": project.get("name"),
+        "production_url": prod_url or (aliases[0] if aliases else None),
+        "domains": aliases,
+        "framework": project.get("framework"),
+        "node_version": project.get("nodeVersion"),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Tool: vercel_logs
+# ---------------------------------------------------------------------------
+
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True), timeout=30.0)
+async def vercel_logs(deployment_id: str | None = None, limit: int = 20) -> dict:
+    """Get runtime logs for a Vercel deployment.
+
+    Args:
+        deployment_id: Specific deployment ID. If omitted, uses latest deployment.
+        limit: Number of log lines to fetch (max 100).
+    """
+    if not deployment_id:
+        deps = await vercel_list_deployments(1)
+        if not deps:
+            return {"error": "No deployments found"}
+        deployment_id = deps[0].get("uid", "")
+
+    async with httpx.AsyncClient() as c:
+        r = await c.get(
+            f"{VERCEL_API}/v1/projects/{VERCEL_PROJECT_ID}/deployments/{deployment_id}/runtime-logs",
+            headers=_vercel_headers(),
+            params=_vercel_params(limit=min(limit, 100)),
+            timeout=30,
+        )
+        r.raise_for_status()
+        logs = r.json()
+
+    if isinstance(logs, dict) and "logs" in logs:
+        logs = logs["logs"]
+
+    return {
+        "deployment_id": deployment_id,
+        "log_count": len(logs) if isinstance(logs, list) else 0,
+        "logs": logs[:limit] if isinstance(logs, list) else logs,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Tool: vercel_build_logs
+# ---------------------------------------------------------------------------
+
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True), timeout=30.0)
+async def vercel_build_logs(deployment_id: str | None = None, limit: int = 50) -> dict:
+    """Get build logs for a Vercel deployment.
+
+    Args:
+        deployment_id: Specific deployment ID. If omitted, uses latest deployment.
+        limit: Number of log entries to fetch (max 200).
+    """
+    if not deployment_id:
+        deps = await vercel_list_deployments(1)
+        if not deps:
+            return {"error": "No deployments found"}
+        deployment_id = deps[0].get("uid", "")
+
+    async with httpx.AsyncClient() as c:
+        r = await c.get(
+            f"{VERCEL_API}/v3/deployments/{deployment_id}/events",
+            headers=_vercel_headers(),
+            params=_vercel_params(limit=min(limit, 200)),
+            timeout=30,
+        )
+        r.raise_for_status()
+        events = r.json()
+
+    if isinstance(events, dict) and "events" in events:
+        events = events["events"]
+
+    return {
+        "deployment_id": deployment_id,
+        "event_count": len(events) if isinstance(events, list) else 0,
+        "events": events[:limit] if isinstance(events, list) else events,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Run
 # ---------------------------------------------------------------------------
 
