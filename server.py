@@ -72,7 +72,7 @@ async def vercel_list_deployments(limit: int = 5) -> list[dict]:
         if VERCEL_TEAM_ID:
             params["teamId"] = VERCEL_TEAM_ID
         h = {"Authorization": f"Bearer {VERCEL_TOKEN}"} if VERCEL_TOKEN else {}
-        r = await c.get(f"{VERCEL_API}/v13/deployments", headers=h, params=params, timeout=30)
+        r = await c.get(f"{VERCEL_API}/v6/deployments", headers=h, params=params, timeout=30)
         r.raise_for_status()
         return r.json().get("deployments", [])
 
