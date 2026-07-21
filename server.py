@@ -429,7 +429,7 @@ async def vercel_urls() -> dict:
 # Tool: vercel_logs
 # ---------------------------------------------------------------------------
 
-@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True), timeout=30.0)
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True), timeout=60.0)
 async def vercel_logs(deployment_id: str | None = None, limit: int = 20) -> dict:
     """Get runtime logs for a Vercel deployment.
 
@@ -443,15 +443,28 @@ async def vercel_logs(deployment_id: str | None = None, limit: int = 20) -> dict
             return {"error": "No deployments found"}
         deployment_id = deps[0].get("uid", "")
 
-    async with httpx.AsyncClient() as c:
-        r = await c.get(
-            f"{VERCEL_API}/v1/projects/{VERCEL_PROJECT_ID}/deployments/{deployment_id}/runtime-logs",
-            headers=_vercel_headers(),
-            params=_vercel_params(limit=min(limit, 100)),
-            timeout=30,
-        )
-        r.raise_for_status()
-        logs = r.json()
+    try:
+        async with httpx.AsyncClient() as c:
+            r = await c.get(
+                f"{VERCEL_API}/v1/projects/{VERCEL_PROJECT_ID}/deployments/{deployment_id}/runtime-logs",
+                headers=_vercel_headers(),
+                params=_vercel_params(limit=min(limit, 100)),
+                timeout=50,
+            )
+            r.raise_for_status()
+            logs = r.json()
+    except Exception:
+        async with httpx.AsyncClient() as c:
+            r = await c.get(
+                f"{VERCEL_API}/v3/deployments/{deployment_id}/events",
+                headers=_vercel_headers(),
+                params=_vercel_params(limit=min(limit, 100)),
+                timeout=30,
+            )
+            r.raise_for_status()
+            logs = r.json()
+            if isinstance(logs, dict) and "events" in logs:
+                logs = logs["events"]
 
     if isinstance(logs, dict) and "logs" in logs:
         logs = logs["logs"]
